@@ -564,3 +564,95 @@ Based on the workspace repository map, the architecture supports modular extensi
 * **How it works:** Allows overriding parsing behaviors, numeric conversions, and safety limits at runtime via Java system properties or mutable static fields.
 
 > Tokens: 5.7k sent, 601 received. Cost: $0.0065 message, $0.01 session.  
+
+# aider chat started at 2026-10-15 20:36:46
+
+> /home/codespace/.local/bin/aider --chat-mode ask --no-auto-commits --map-tokens 2048 --model gemini/gemini-flash-latest  
+> Aider v0.86.2  
+> Model: gemini/gemini-flash-latest with ask edit format  
+> Git repo: .git with 64 files  
+> Repo-map: using 2048 tokens, auto refresh  
+
+#### Analyze the workspace repository map. Identify the top 3 core modules/subsystems and map their static dependencies and communication contracts.  
+
+Based on the repository map, here are the top 3 core subsystems along with their static dependencies and communication contracts:
+
+---
+
+### 1. JSON Core Model & Parser (`org.codehaus.jettison.json`)
+Provides the low-level JSON object model, lexical tokenizer, and serialization logic.
+
+* **Key Components:** `JSONObject`, `JSONArray`, `JSONTokener`, `JSONStringer`, `JSONString`, `JSONException`.
+* **Static Dependencies:**
+  * Standard Java runtime (`java.io.*`, `java.util.*`, `java.io.Serializable`).
+  * Self-contained within the package (e.g., `JSONObject` and `JSONArray` depend reciprocally on each other and both consume `JSONTokener`).
+* **Communication Contracts:**
+  * **Parsing Contract:** `JSONTokener` parses characters from streams/readers and raises `JSONException` on syntactic or recursion limit violations (`checkRecursionDepth()`).
+  * **Data Access Contract:** `JSONObject` and `JSONArray` provide typed retrieval APIs (`getString()`, `getBoolean()`, `get()`) and tree mutation methods.
+  * **Custom Serialization Contract:** `JSONString.toJSONString()` allows objects to define their own JSON representations.
+
+---
+
+### 2. StAX Core & Abstraction Engine (`org.codehaus.jettison`)
+Acts as the central bridge between standard XML streaming (JAXP/StAX) and JSON structures.
+
+* **Key Components:** `AbstractXMLInputFactory`, `AbstractXMLStreamReader`, `Convention`, `Node`, `XsonNamespaceContext`.
+* **Static Dependencies:**
+  * StAX APIs: `javax.xml.stream.*` (`XMLStreamReader`, `XMLInputFactory`, `XMLStreamException`), `javax.xml.namespace.QName`, `javax.xml.namespace.NamespaceContext`.
+  * JSON Core: `org.codehaus.jettison.json.*` (`JSONObject`, `JSONArray`, `JSONTokener`, `JSONException`).
+* **Communication Contracts:**
+  * **Convention SPI (`Convention`):** Defines methods for interpreting JSON nodes as XML constructs:
+    * `processAttributesAndNamespaces(Node n, JSONObject object)`
+    * `createQName(String name, Node node)`
+  * **Node State Contract (`Node`):** Encapsulates the current hierarchical XML/JSON parsing frame (tracks `JSONObject`, attributes map, namespace bindings, current key, and parent references).
+  * **Namespace Resolution Contract (`XsonNamespaceContext` / `Node`):** Resolves prefixes to URIs and vice versa across the node stack.
+
+---
+
+### 3. Mapped Convention Subsystem (`org.codehaus.jettison.mapped`)
+Implements mapped XML-JSON transformations, handling configured namespace mappings, attribute prefixes, and primitive type conversions.
+
+* **Key Components:** `MappedNamespaceConvention`, `MappedXMLOutputFactory`, `MappedXMLStreamWriter`, `Configuration`, `TypeConverter`, `DefaultConverter`.
+* **Static Dependencies:**
+  * StAX Core: `org.codehaus.jettison.Convention`, `AbstractXMLOutputFactory`, `AbstractXMLStreamWriter`.
+  * JSON Core: `org.codehaus.jettison.json.*`.
+  * StAX API: `javax.xml.stream.XMLStreamWriter`, `javax.xml.namespace.NamespaceContext`.
+* **Communication Contracts:**
+  * **Configuration Contract (`Configuration`):** Manages namespace mapping tables (`nstojns` / `jnsToXns`), custom type converter registration, and configuration settings.
+  * **Type Conversion SPI (`TypeConverter`):** Exposes `Object convertToJSONPrimitive(String text)` for converting string representations into numbers, booleans, or strings.
+  * **Writer & Convention Contract:** `MappedXMLOutputFactory` binds `Configuration` to `MappedNamespaceConvention`, producing `MappedXMLStreamWriter` instances conforming to `javax.xml.stream.XMLStreamWriter`.
+
+> Tokens: 5.1k sent, 777 received. Cost: $0.0067 message, $0.0067 session.  
+
+#### Analyze the workspace repository map. Locate where and how the architecture supports modular extensions, plugins, or custom behavior overrides.  
+
+Based on the repository map, the architecture supports modular extensions, plugins, and custom behavior overrides through the following extension points:
+
+### 1. Convention SPI (`Convention`)
+* **Location:** `org.codehaus.jettison.Convention` (implemented by `BadgerFishConvention`, `MappedNamespaceConvention`).
+* **Mechanism:** Defines how XML constructs (elements, attributes, namespaces, and QNames) map to JSON structures. Custom XML-to-JSON conventions can be created by implementing:
+  * `processAttributesAndNamespaces(Node n, JSONObject object)`
+  * `createQName(String name, Node node)`
+
+### 2. Type Conversion Strategy (`TypeConverter`)
+* **Location:** `org.codehaus.jettison.mapped.TypeConverter` (implementations include `DefaultConverter`, `SimpleConverter`, and decorators like `NullStringConverter`).
+* **Mechanism:** Overrides how text content is converted into JSON data types (numbers, booleans, strings, or null) via `convertToJSONPrimitive(String text)`.
+* **Configuration:**
+  * Programmatic injection: Configured on `Configuration` via `cfg.setTypeConverter(...)`.
+  * Dynamic/Reflective override: Configurable via the system property defined by `Configuration.JETTISON_TYPE_CONVERTER_CLASS_KEY` (`jettison.mapped.typeconverter...`).
+
+### 3. Factory and Stream Abstractions (StAX Provider Model)
+* **Location:** `AbstractXMLInputFactory`, `AbstractXMLOutputFactory`, `AbstractXMLStreamReader`, `MappedXMLStreamWriter`, `AbstractXMLEventWriter`.
+* **Mechanism:** Subclassing abstract factories and stream handlers allows customization of reader/writer creation and event handling (e.g., `MappedXMLOutputFactory` binds specific `Convention` and `Configuration` instances to produce `MappedXMLStreamWriter`).
+
+### 4. Custom Object JSON Serialization (`JSONString`)
+* **Location:** `org.codehaus.jettison.json.JSONString`.
+* **Mechanism:** Any domain object implementing `JSONString` can provide custom serialization logic by implementing `toJSONString()`.
+
+### 5. Configurable Runtime Behavior via System Properties and Limits
+* **Location:** `Configuration`, `DefaultConverter`, `JSONTokener`, `JSONObject`, `JSONArray`.
+* **Mechanism:** Allows overriding parsing and processing behavior without code modification via system properties and static variables:
+  * System properties: `jettison.mapped.typeconverter.enforce_32bit_integer`, `jettison.json.jsontokener.use_bigdecimal`, etc.
+  * Runtime limits: Modifying `RECURSION_DEPTH_LIMIT`, `ARRAY_LENGTH_LIMIT`, or `OBJECT_KEY_LIMIT` to adjust safety constraints.
+
+> Tokens: 5.5k sent, 548 received. Cost: $0.0062 message, $0.01 session.  
